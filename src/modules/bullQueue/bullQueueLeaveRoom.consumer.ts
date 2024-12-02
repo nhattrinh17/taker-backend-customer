@@ -5,21 +5,23 @@ import { Job } from 'bull';
 import { In, Repository } from 'typeorm';
 
 import { QUEUE_NAMES, StatusEnum } from '@common/index';
-// import { GatewaysService } from '@gateways/gateways.service';
 
 import { Trip } from '@entities/index';
+import { BullQueueService } from '@modules/bullQueue/bullQueue.service';
+import { SocketService } from '@modules/socket/socket.service';
 
 @Processor(QUEUE_NAMES.LEAVE_ROOM)
-export class LeaveRoomConsumer {
-  private readonly logger = new Logger(LeaveRoomConsumer.name);
+export class BullQueueLeaveRoomConsumer {
+  private readonly logger = new Logger(BullQueueLeaveRoomConsumer.name);
 
   constructor(
     @InjectRepository(Trip)
     private readonly tripRepository: Repository<Trip>,
-    // private readonly gateWaysService: GatewaysService,
+    private readonly bullQueueService: BullQueueService,
+    private readonly socketService: SocketService,
   ) {}
 
-  @Process('leave-room')
+  @Process('leave-room-backend')
   async handleLeaveRoom(job: Job<unknown>) {
     try {
       const { userId } = job.data as {
@@ -33,11 +35,12 @@ export class LeaveRoomConsumer {
         },
       });
       if (trip && trip.shoemakerId) {
-        // TODO: Update socket gateway
-        // const socket = await this.gateWaysService.getSocket(userId);
-        // if (socket) {
-        //   socket.leave(trip.shoemakerId);
-        // }
+        const socketCustomerId = await this.socketService.getSocketIdByUserId(userId);
+        if (socketCustomerId)
+          this.bullQueueService.addQueueLeaveRoom('leave-room-websocket', {
+            roomName: trip.shoemakerId,
+            socketId: socketCustomerId,
+          });
       }
     } catch (error) {
       this.logger.error(error);

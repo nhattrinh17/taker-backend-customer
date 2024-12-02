@@ -34,7 +34,8 @@ import { CUSTOMERS, NOTIFICATIONS_SCREEN, SHOEMAKER } from '@common/constants/no
 import { FirebaseService } from '@common/services/firebase.service';
 import { CancelTripDto, CreateTripDto, RateTripDto } from './dto';
 import RedisService from '@common/services/redis.service';
-import Redis from 'ioredis';
+import { SocketService } from '@modules/socket/socket.service';
+import { BullQueueService } from '@modules/bullQueue/bullQueue.service';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -56,13 +57,13 @@ export class TripsService {
     private readonly notificationRepository: Repository<Notification>,
     @InjectRepository(RatingSummary)
     private readonly ratingSummaryRepository: Repository<RatingSummary>,
-    // private readonly gateWaysService: GatewaysService,
-    @InjectQueue(QUEUE_NAMES.CUSTOMERS_TRIP) private queue: Queue,
+    private readonly socketService: SocketService,
     @InjectRepository(Customer)
     private readonly customerRepository: Repository<Customer>,
     private readonly dataSource: DataSource,
     private readonly firebaseService: FirebaseService,
     private readonly redis: RedisService,
+    private readonly bullQueueService: BullQueueService,
   ) {}
 
   /**
@@ -270,7 +271,7 @@ export class TripsService {
         // Update job id for trip
         const jobId = `${QUEUE_NAMES.CUSTOMERS_TRIP}-${trip.id}`;
         await this.tripRepository.update(trip.id, { jobId });
-        this.queue.add(
+        this.bullQueueService.addQueueTrip(
           'trip-schedule',
           { tripId: trip.id, userId, statusSchedule: StatusScheduleShoemaker.findShoemaker },
           {
@@ -281,16 +282,19 @@ export class TripsService {
       }
 
       // Check customer and update status newUser
-      console.log('Customer1111');
       if (customerInfo.newUser) {
         await this.customerRepository.update(userId, { newUser: false });
       }
 
-      // TODO: Update gateway service
       // send to admins new trips
-      // this.gateWaysService.emitToRoomWithServer(RoomNameAdmin, EventEmitSocket.TripCreate, {
-      //   idTrip: trip.id,
-      // });
+      await this.socketService.sendMessageToRoom({
+        data: {
+          idTrip: trip.id,
+        },
+        event: EventEmitSocket.TripCreate,
+        roomName: RoomNameAdmin,
+      });
+
       const tokens = await this.redis.smembers(`${SOCKET_PREFIX}admins-fcm-token`);
       // console.log('🚀 ~ TripsService ~ create ~ tokens:', tokens);
       tokens.length &&
@@ -478,7 +482,7 @@ export class TripsService {
 
         try {
           if (trip.jobId) {
-            const job = await this.queue.getJob(trip.jobId);
+            const job = await this.bullQueueService.getQueueTripById(trip.jobId);
             if (job && (await job.isActive())) {
               await job.moveToCompleted('Canceled by customer', true);
             } else if (job) {
@@ -495,7 +499,6 @@ export class TripsService {
           });
 
           if (shoemaker) {
-            //TODO: send notification to shoemaker
             if (trip.scheduleTime) {
               await this.shoemakerRepository.update(shoemaker.id, {
                 isSchedule: false,
@@ -506,28 +509,37 @@ export class TripsService {
               });
             }
 
-            // TODO: Update socket gateway
             // Send notification to shoemaker
-            // const shoemakerSocket = await this.gateWaysService.getSocket(shoemaker.id);
-            // if (shoemakerSocket) {
-            //   shoemakerSocket.emit('trip-update', {
-            //     type: trip.scheduleTime ? 'customer-cancel-schedule' : 'customer-cancel',
-            //     message: 'Trip has been canceled by the customer. You can now accept new trips.',
-            //   });
-            // }
-            // const socket = await this.gateWaysService.getSocket(userId);
-            // // Leave the room and prevent the customer from receiving updates
-            // if (socket) {
-            //   socket.leave(shoemaker.id);
-            // }
+            const shoemakerSocketId = await this.socketService.getSocketIdByUserId(shoemaker.id);
+            if (shoemakerSocketId) {
+              this.socketService.sendMessageToRoom({
+                data: {
+                  type: trip.scheduleTime ? 'customer-cancel-schedule' : 'customer-cancel',
+                  message: 'Trip has been canceled by the customer. You can now accept new trips.',
+                },
+                event: 'trip-update',
+                roomName: shoemakerSocketId,
+              });
+            }
+            const socketCustomerId = await this.socketService.getSocketIdByUserId(userId);
+            // Leave the room and prevent the customer from receiving updates
+            if (socketCustomerId) {
+              this.bullQueueService.addQueueLeaveRoom('leave-room-websocket', {
+                roomName: shoemaker.id,
+                socketId: socketCustomerId,
+              });
+            }
           }
         }
 
-        // TODO: Update socket gateway
         // send to admin remove trip
-        // this.gateWaysService.emitToRoomWithServer(RoomNameAdmin, EventEmitSocket.TripCancel, {
-        //   idTrip: trip.id,
-        // });
+        this.socketService.sendMessageToRoom({
+          data: {
+            idTrip: trip.id,
+          },
+          event: EventEmitSocket.TripCancel,
+          roomName: RoomNameAdmin,
+        });
       } catch (error) {
         await queryRunner.rollbackTransaction();
         throw error;

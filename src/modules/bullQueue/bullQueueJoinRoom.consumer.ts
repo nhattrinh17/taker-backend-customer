@@ -5,26 +5,27 @@ import { Job } from 'bull';
 import { In, Repository } from 'typeorm';
 
 import { QUEUE_NAMES, StatusEnum } from '@common/index';
-// import { GatewaysService } from '@gateways/gateways.service';
 
 import { Trip } from '@entities/index';
+import { BullQueueService } from '@modules/bullQueue/bullQueue.service';
+import { SocketService } from '@modules/socket/socket.service';
+import { QueueStartJointRoomDto } from './dto/bullQueue.dto';
 
 @Processor(QUEUE_NAMES.JOIN_ROOM)
-export class JoinRoomConsumer {
-  private readonly logger = new Logger(JoinRoomConsumer.name);
+export class BullQueueJoinRoomConsumer {
+  private readonly logger = new Logger(BullQueueJoinRoomConsumer.name);
 
   constructor(
     @InjectRepository(Trip)
     private readonly tripRepository: Repository<Trip>,
-    // private readonly gateWaysService: GatewaysService,
+    private readonly bullQueueService: BullQueueService,
+    private readonly socketService: SocketService,
   ) {}
 
-  @Process('join-room')
+  @Process('join-room-backend')
   async handleJoinRoom(job: Job<unknown>) {
     try {
-      const { userId } = job.data as {
-        userId: string;
-      };
+      const { userId } = job.data as QueueStartJointRoomDto;
 
       const trip = await this.tripRepository.findOne({
         where: {
@@ -33,11 +34,12 @@ export class JoinRoomConsumer {
         },
       });
       if (trip && trip.shoemakerId) {
-        // TODO: Update socket gateway
-        // const socket = await this.gateWaysService.getSocket(userId);
-        // if (socket) {
-        //   socket.join(trip.shoemakerId);
-        // }
+        const socketCustomerId = await this.socketService.getSocketIdByUserId(userId);
+        if (socketCustomerId)
+          this.bullQueueService.addQueueJoinRoom('join-room-websocket', {
+            roomName: trip.shoemakerId,
+            socketId: socketCustomerId,
+          });
       }
     } catch (error) {
       this.logger.error(error);

@@ -18,6 +18,10 @@ export default class RedisService {
     // this.client.config('SET', 'notify-keyspace-events', 'Ex');
   }
 
+  publish(channel: string, message: string) {
+    return this.client.publish(channel, message);
+  }
+
   /**
    * Set method
    * @param {String} key
@@ -94,19 +98,46 @@ export default class RedisService {
     return this.client.sadd(key, valueData);
   }
 
-  // Check phần tử tồn tại
+  /**
+   * Check phần tử tồn tại
+   * @param key
+   * @param valueData
+   * @returns
+   */
   sismember(key: string, valueData: any) {
     return this.client.sismember(key, valueData);
   }
 
-  // Get all item in arr
+  /**
+   * Lấy tất cả phần tử trong set
+   * @param key
+   * @returns
+   */
   smembers(key: string) {
     return this.client.smembers(key);
   }
 
-  // Xóa một phần tửu trong set
+  /**
+   * Xóa một phần tửu trong set
+   */
   srem(key: string, valueData: any) {
     return this.client.srem(key, valueData);
+  }
+
+  async hget(key: string, field: string) {
+    return await this.client.hget(key, field);
+  }
+
+  async hgetAll(key: string) {
+    return await this.client.hgetall(key);
+  }
+
+  async hset(key: string, field: string, fieldValue: any) {
+    return await this.client.hset(key, field, fieldValue);
+  }
+
+  async hdel(key: string, value: string) {
+    await this.client.hdel(key, value);
   }
 
   getClient(): Redis {

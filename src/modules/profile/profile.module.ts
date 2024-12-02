@@ -8,26 +8,18 @@ import { ProfileController } from './profile.controller';
 import { ProfileService } from './profile.service';
 
 import { JoinRoomListener } from './listeners/join-room.listener';
-import { JoinRoomConsumer } from './consumers/join-room.consumer';
 import { LeaveRoomListener } from './listeners/leave-room.listener';
-import { LeaveRoomConsumer } from './consumers/leave-room.consumer';
+import { BullQueueModule } from '@modules/bullQueue/bullQueue.module';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([Customer, Trip]),
-    BullModule.registerQueue(
-      { name: QUEUE_NAMES.JOIN_ROOM },
-      { name: QUEUE_NAMES.LEAVE_ROOM },
-    ),
-  ],
+  imports: [TypeOrmModule.forFeature([Customer, Trip]), BullQueueModule],
   controllers: [ProfileController],
   providers: [
+    //
     ProfileService,
     S3Service,
     JoinRoomListener,
-    JoinRoomConsumer,
     LeaveRoomListener,
-    LeaveRoomConsumer,
   ],
 })
 export class ProfileModule {}

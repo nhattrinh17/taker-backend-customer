@@ -1,30 +1,14 @@
 import RedisService from '@common/services/redis.service';
-import { InjectQueue, Process, Processor } from '@nestjs/bull';
+import { Process, Processor } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Job, Queue } from 'bull';
+import { Job } from 'bull';
 import * as h3 from 'h3-js';
-import { Redis } from 'ioredis';
 import { LessThan, Repository } from 'typeorm';
 
 import { NOTIFICATIONS_SCREEN } from '@common/constants/notifications.constant';
-import {
-  EventEmitSocket,
-  NOTIFICATIONS_SCREEN_CUSTOMER,
-  NOTIFICATIONS_SCREEN_SHOEMAKER,
-  PaymentEnum,
-  PaymentStatusEnum,
-  QUEUE_NAMES,
-  RESOLUTION,
-  RequestTripData,
-  RoomNameAdmin,
-  SocketEvents,
-  StatusEnum,
-  StatusScheduleShoemaker,
-  calculateTimeDifferenceV2,
-} from '@common/index';
+import { NOTIFICATIONS_SCREEN_CUSTOMER, NOTIFICATIONS_SCREEN_SHOEMAKER, PaymentEnum, PaymentStatusEnum, QUEUE_NAMES, RESOLUTION, RequestTripData, StatusEnum, StatusScheduleShoemaker, calculateTimeDifferenceV2 } from '@common/index';
 import { FirebaseService } from '@common/services/firebase.service';
 import { Customer, Notification, Shoemaker, Trip, TripCancellation } from '@entities/index';
 // import { GatewaysService } from '@gateways/gateways.service';
@@ -33,8 +17,8 @@ import { SocketService } from '@modules/socket/socket.service';
 import { BullQueueService } from '@modules/bullQueue/bullQueue.service';
 
 @Processor(QUEUE_NAMES.CUSTOMERS_TRIP)
-export class TripConsumer {
-  private readonly logger = new Logger(TripConsumer.name);
+export class BullQueueTripConsumer {
+  private readonly logger = new Logger(BullQueueTripConsumer.name);
 
   constructor(
     @InjectRepository(Shoemaker)
@@ -45,8 +29,6 @@ export class TripConsumer {
     private readonly customerRepository: Repository<Customer>,
     @InjectRepository(TripCancellation)
     private readonly tripCancellationRepository: Repository<TripCancellation>,
-    @InjectRepository(Notification)
-    private readonly notificationRepository: Repository<Notification>,
     private readonly socketService: SocketService,
     private readonly bullQueueService: BullQueueService,
     private readonly eventEmitter: EventEmitter2,
@@ -77,7 +59,7 @@ export class TripConsumer {
   async handleTripSchedule(job: Job<unknown>) {
     const { tripId, userId, statusSchedule } = job.data as RequestTripData;
     try {
-      console.log('🚀 ~ TripConsumer ~ handleTripSchedule ~ tripId:', tripId);
+      console.log('🚀 ~ BullQueueTripConsumer ~ handleTripSchedule ~ tripId:', tripId);
       if (statusSchedule == StatusScheduleShoemaker.findShoemaker) {
         return this.processFindClosestShoemakers(job, true);
       } else {
@@ -370,7 +352,7 @@ export class TripConsumer {
                   });
               }
             } catch (error) {
-              console.log('[TripConsumer] SEND NOTIFICATION TO SHOEMAKER', error);
+              console.log('[BullQueueTripConsumer] SEND NOTIFICATION TO SHOEMAKER', error);
             }
 
             // if shoemaker socket is not available, store to redis
@@ -395,6 +377,7 @@ export class TripConsumer {
               this.redis.sadd(`trips:request:${tripId}`, shoemaker.id),
             ]);
 
+            // TODO: Cập nhật lại tránh trường hợp từ chối đơn 2 lần
             // Set a timeout to automatically resolve the promise after 60 seconds
             setTimeout(async () => {
               const checkShoemakerAccess = await this.redis.sismember(`trips:accepted:${tripId}`, shoemaker.id);
@@ -487,7 +470,7 @@ export class TripConsumer {
         }
         console.log('Thêm queue chờ gửi thông báo');
         const delayTime = Math.max(trip.scheduleTime - dayjs().tz().valueOf() - 15 * 60 * 1000, 0);
-        console.log('🚀 ~ TripConsumer ~ processFindClosestShoemakers ~ delayTime:', delayTime);
+        console.log('🚀 ~ BullQueueTripConsumer ~ processFindClosestShoemakers ~ delayTime:', delayTime);
         const jobIdNotice = `CUSTOMERS_TRIP_SEND_NOTICE-${trip.id}`;
         await this.bullQueueService.addQueueTrip(
           'trip-schedule',
@@ -520,7 +503,10 @@ export class TripConsumer {
    * @param data { tripId: string, shoemakerId: string }
    */
   @OnEvent('shoemaker-cancelation')
-  @Process('shoemaker-cancellation')
+  @Process({
+    name: 'shoemaker-cancellation',
+    concurrency: 5,
+  })
   async handleShoemakerCancelationListener(data: { tripId: string; shoemakerId: string }) {
     try {
       await this.tripCancellationRepository.save({
@@ -529,216 +515,6 @@ export class TripConsumer {
         reason: 'Hệ thống tự động hủy đơn do hết thời gian chờ',
       });
     } catch (error) {
-      this.logger.error(error);
-    }
-  }
-
-  /**
-   * Function to handle the shoemaker-check-trip-pending event
-   * @param data { userId: string }
-   */
-  @OnEvent('shoemaker-check-trip-pending')
-  async handleShoemakerCheckTripPendingListener(data: { userId: string }) {
-    try {
-      const { userId } = data;
-      this.logger.log(`pendingTrip shoemakerId: ${userId}`);
-      const redisClient = this.redis.getClient();
-      const pendingTrip = await this.redis.get(`pending-trip-${userId}`);
-      this.logger.log(`pendingTrip: ${pendingTrip}`);
-      if (pendingTrip) {
-        const ttl = await redisClient.ttl(`pending-trip-${userId}`);
-        if (ttl < 2) {
-          console.log('Skip pending trip TTL', ttl);
-          return;
-        }
-        const { shoemaker, tripId, jobId, customerId, orderId, customerFcmToken, customerFullName, customerAvatar, customerPhone, scheduleTime } = JSON.parse(pendingTrip);
-
-        const shoemakerSocketId = await this.socketService.getSocketIdByUserId(userId);
-
-        if (!shoemakerSocketId) return;
-        this.logger.log(`ttl: ${ttl}`);
-        await new Promise(async (resolve) => {
-          console.log('Chạy promiseeeeeee');
-          //Update when shoemaker not accepted then emit data customer to shoemaker
-          const trip = await this.tripRepository.findOne({
-            select: {
-              id: true,
-              address: true,
-              status: true,
-              totalPrice: true,
-              paymentMethod: true,
-              latitude: true,
-              longitude: true,
-              orderId: true,
-              addressNote: true,
-              paymentStatus: true,
-            },
-            where: { id: tripId, status: StatusEnum.SEARCHING },
-            relations: ['services'],
-          });
-          // console.log('Shoemaker', shoemaker.fullName);
-          // console.log('🚀 ~ TripConsumer ~ awaitnewPromise ~ trip:', trip, shoemakerSocket.id);
-
-          if (shoemakerSocketId) {
-            setTimeout(async () => {
-              await this.socketService.sendMessageToRoom({
-                data: {
-                  fullName: customerFullName,
-                  phone: customerPhone,
-                  avatar: customerAvatar,
-                  location: trip.address,
-                  tripId: trip.id,
-                  time: shoemaker.time,
-                  latitude: trip.latitude,
-                  longitude: trip.longitude,
-                  services: trip.services.map(({ price, discount, name, discountPrice, quantity }) => ({
-                    price,
-                    discount,
-                    name,
-                    discountPrice,
-                    quantity,
-                  })),
-                  totalPrice: trip.totalPrice,
-                  paymentMethod: trip.paymentMethod,
-                  addressNote: trip.addressNote,
-                  distance: shoemaker.distance,
-                  scheduleTime: +scheduleTime,
-                },
-                event: 'shoemaker-request-trip',
-                roomName: shoemakerSocketId,
-              });
-            }, 2000);
-          }
-
-          // responseListener wait shoemaker socket
-          // const responseListener = async (data) => {
-          //   console.log('🚀 ~ TripConsumer ~ responseListener ~ data:', data);
-          //   // Check if the jobId still exists
-          //   const currentTrip = await this.tripRepository.findOne({
-          //     where: { id: tripId },
-          //     select: {
-          //       status: true,
-          //       id: true,
-          //     },
-          //   });
-          //   if (currentTrip.status != StatusEnum.SEARCHING) {
-          //     // Notify the previous shoemaker that the trip has been canceled
-          //     if (currentTrip.status == StatusEnum.CUSTOMER_CANCEL) {
-          //       // shoemakerSocket &&
-          //       //   shoemakerSocket.emit('trip-update', {
-          //       //     type: 'customer-cancel',
-          //       //     message: 'Trip has been canceled by the customer. You can now accept new trips.',
-          //       //     tripId,
-          //       //   });
-          //     } else if (currentTrip.status == StatusEnum.ACCEPTED) {
-          //       // shoemakerSocket &&
-          //       //   shoemakerSocket.emit('trip-update', {
-          //       //     type: 'timeout',
-          //       //     message: 'Trip has been sent to another shoemaker due to no response',
-          //       //   });
-          //     }
-          //     // shoemakerSocket && shoemakerSocket.off('shoemaker-response-trip', responseListener); // Remove the event listener
-          //     return; // Exit the function to ensure nothing else is executed
-          //   } else {
-          //     // If the shoemaker accepted, resolve the promise with the shoemaker
-          //     if (data.accepted) {
-          //       // shoemakerSocket && shoemakerSocket.off('shoemaker-response-trip', responseListener); // Remove the event listener
-
-          //       await this.tripRepository.update(tripId, {
-          //         status: StatusEnum.ACCEPTED,
-          //         shoemakerId: userId,
-          //       });
-
-          //       // const socket = await this.gateWaysService.getSocket(customerId);
-          //       // socket &&
-          //       //   socket.emit('find-closest-shoemakers', {
-          //       //     type: 'success',
-          //       //     data: {
-          //       //       fullName: shoemaker?.fullName,
-          //       //       time: shoemaker?.time,
-          //       //       phone: shoemaker?.phone,
-          //       //       avatar: shoemaker?.avatar,
-          //       //       id: shoemaker?.id,
-          //       //       lat: shoemaker?.latitude,
-          //       //       lng: shoemaker?.longitude,
-          //       //     },
-          //       //   });
-
-          //       // Update the shoemaker status to isTrip
-          //       await this.shoemakerRepository.update(shoemaker.id, {
-          //         isTrip: true,
-          //       });
-          //       // Create notification for the customer
-          //       await this.notificationRepository.save({
-          //         customerId,
-          //         title: 'Đặt hàng thành công',
-          //         content: `Bạn đã đặt hàng thành công đơn hàng ${orderId}. Thời gian dự kiến thợ đánh giày đến là ${Math.round(shoemaker.time)} phút.`,
-          //       });
-
-          //       if (customerFcmToken) {
-          //         this.firebaseService
-          //           .send({
-          //             title: 'TAKER',
-          //             body: `Bạn đã đặt hàng thành công đơn hàng ${orderId}. Thời gian dự kiến thợ đánh giày đến là ${Math.round(shoemaker.time)} phút.`,
-          //             token: customerFcmToken,
-          //             data: {
-          //               fullName: shoemaker?.fullName,
-          //               phone: shoemaker?.phone,
-          //               avatar: shoemaker?.avatar,
-          //               id: shoemaker?.id,
-          //               lat: shoemaker?.latitude,
-          //               lng: shoemaker?.longitude,
-          //             },
-          //           })
-          //           .catch(() => {});
-          //       }
-
-          //       // Join the customer to the shoemaker room to receive updates if trip not schedule
-          //       if (!scheduleTime) {
-          //         // socket && socket.join(shoemaker.id);
-          //       } else {
-          //         // Add queue send notification if trip schedule
-          //         console.log('Thêm queue chờ gửi thông báo');
-          //         const delayTime = Math.max(+scheduleTime - dayjs().tz().valueOf() - 15 * 60 * 1000, 0);
-          //         console.log('🚀 ~ TripConsumer ~ processFindClosestShoemakers ~ delayTime:', delayTime);
-          //         const jobIdNotice = `CUSTOMERS_TRIP_SEND_NOTICE-${trip.id}`;
-          //         await this.queue.add(
-          //           'trip-schedule',
-          //           { tripId: trip.id, userId, statusSchedule: StatusScheduleShoemaker.sendNotification },
-          //           {
-          //             delay: 30 * 1000,
-          //             // delay: delayTime,
-          //             jobId: jobIdNotice,
-          //             removeOnComplete: true,
-          //           },
-          //         );
-          //       }
-
-          //       try {
-          //         const job = await this.queue.getJob(jobId);
-          //         if (job && (await job.isActive())) {
-          //           await job.moveToCompleted('Canceled by customer', true);
-          //         } else if (job) {
-          //           await job.remove();
-          //         }
-          //       } catch (error) {
-          //         console.log('🚀 ~ TripConsumer ~ responseListener ~ error:773', error);
-          //       }
-          //     } else {
-          //       this.logger.log(`Send request to shoemaker`);
-          //       // If the shoemaker declined, resolve the promise with null
-          //       this.eventEmitter.emit('shoemaker-cancelation', {
-          //         tripId,
-          //         shoemakerId: userId,
-          //       });
-          //       // shoemakerSocket && shoemakerSocket.off('shoemaker-response-trip', responseListener); // Remove the event listener
-          //     }
-          //   }
-          // };
-        });
-      }
-    } catch (error) {
-      console.log('🚀 ~ TripConsumer ~ handleShoemakerCheckTripPendingListener ~ error:', error);
       this.logger.error(error);
     }
   }

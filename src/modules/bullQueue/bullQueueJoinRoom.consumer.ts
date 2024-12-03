@@ -22,7 +22,10 @@ export class BullQueueJoinRoomConsumer {
     private readonly socketService: SocketService,
   ) {}
 
-  @Process('join-room-backend')
+  @Process({
+    name: 'join-room-backend',
+    concurrency: 5,
+  })
   async handleJoinRoom(job: Job<unknown>) {
     try {
       const { userId } = job.data as QueueStartJointRoomDto;

@@ -6,13 +6,15 @@ import { QUEUE_NAMES } from '@common/constants';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { FirebaseService } from '@common/index';
 import { SocketModule } from '@modules/socket/socket.module';
-import { Trip } from '@entities/index';
+import { Customer, Shoemaker, Trip, TripCancellation } from '@entities/index';
 import { BullQueueJoinRoomConsumer } from './bullQueueJoinRoom.consumer';
 import { BullQueueLeaveRoomConsumer } from './bullQueueLeaveRoom.consumer';
+import { BullQueueTripConsumer } from './bullQueueTrips.consumer';
+import RedisService from '@common/services/redis.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Trip]),
+    TypeOrmModule.forFeature([Trip, Shoemaker, Customer, TripCancellation]),
     SocketModule,
     BullModule.forRootAsync({
       imports: [ConfigModule],
@@ -51,9 +53,11 @@ import { BullQueueLeaveRoomConsumer } from './bullQueueLeaveRoom.consumer';
   providers: [
     FirebaseService,
     BullQueueService,
+    RedisService,
     // Consumer
     BullQueueJoinRoomConsumer,
     BullQueueLeaveRoomConsumer,
+    BullQueueTripConsumer,
   ],
   exports: [BullQueueService],
 })

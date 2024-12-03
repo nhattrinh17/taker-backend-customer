@@ -21,7 +21,10 @@ export class BullQueueLeaveRoomConsumer {
     private readonly socketService: SocketService,
   ) {}
 
-  @Process('leave-room-backend')
+  @Process({
+    name: 'leave-room-backend',
+    concurrency: 5,
+  })
   async handleLeaveRoom(job: Job<unknown>) {
     try {
       const { userId } = job.data as {

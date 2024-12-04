@@ -3,4 +3,6 @@ import { BaseRepositoryInterface } from 'src/base';
 
 export interface TripServiceRepositoryInterface extends BaseRepositoryInterface<TripService> {
   getDataDashboard(startDate: string, endDate: string): Promise<any>;
+
+  checkTripHasServiceExperienceOnce(tripId: string): Promise<boolean>;
 }

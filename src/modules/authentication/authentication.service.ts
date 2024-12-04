@@ -12,7 +12,6 @@ import { Customer, Option } from '@entities/index';
 import { CreateCustomerDto, DeviceInfoDto, ForgotCustomerDto, LoginCustomerDto, NewPasswordDto, VerifyOtpDto, VerifyPhoneNumberDto } from './dto';
 
 import { AppType, DEFAULT_MESSAGES, OPTIONS, SmsService, StringeeService, generateHashedPassword, generateOTP, makePhoneNumber, otpToText, validPassword } from '@common/index';
-
 import { DeviceRepositoryInterface } from 'src/database/interface/device.interface';
 import { BonusPointService } from '@modules/bonus_point/bonus_point.service';
 
@@ -142,12 +141,6 @@ export class AuthenticationService {
         password: generateHashedPassword(dto.password),
         deviceId,
       });
-      if (dto.referralCode) {
-        const referralUser = await this.userRepository.findOneBy({ phone: dto.referralCode });
-        if (referralUser) {
-          await this.bonusPointService.checkAndAddPointToReferralUser(referralUser.id);
-        }
-      }
 
       return { userId: user.id };
     } catch (e) {
@@ -164,6 +157,15 @@ export class AuthenticationService {
     try {
       const user = await this.userRepository.findOneBy({ id: userId, otp });
       if (!user) throw new BadRequestException('Invalid OTP');
+
+      // Check and pay reward to referrer
+      if (user.referralCode && !user.isVerified) {
+        const referralUser = await this.userRepository.findOneBy({ phone: user.referralCode });
+        if (referralUser) {
+          await this.bonusPointService.checkAndAddPointToReferralUser(referralUser.id);
+        }
+      }
+
       const updateData = isForgetPass ? { isVerified: true } : { isVerified: true, otp: null };
 
       await this.userRepository.update(user.id, updateData);

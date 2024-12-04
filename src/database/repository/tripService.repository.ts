@@ -39,4 +39,10 @@ export class TripServiceRepository extends BaseRepositoryAbstract<TripService> i
 
     return await queryBuilder.getRawMany();
   }
+
+  async checkTripHasServiceExperienceOnce(tripId: string): Promise<boolean> {
+    const result = await this.tripServiceRepository.createQueryBuilder('tripService').leftJoin('tripService.service', 'service').where('tripService.tripId = :tripId', { tripId }).andWhere('service.experienceOnce = true').getOne(); // Dùng getOne() để lấy kết quả nếu có ít nhất một bản ghi thỏa mãn
+
+    return !!result; // Trả về true nếu có bản ghi, false nếu không có
+  }
 }

@@ -1,5 +1,5 @@
 import { InjectQueue } from '@nestjs/bull';
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 // import * as Sentry from '@sentry/node';
@@ -36,6 +36,7 @@ import { CancelTripDto, CreateTripDto, RateTripDto } from './dto';
 import RedisService from '@common/services/redis.service';
 import { SocketService } from '@modules/socket/socket.service';
 import { BullQueueService } from '@modules/bullQueue/bullQueue.service';
+import { TripServiceRepositoryInterface } from 'src/database/interface/tripService.interface';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -64,6 +65,8 @@ export class TripsService {
     private readonly firebaseService: FirebaseService,
     private readonly redis: RedisService,
     private readonly bullQueueService: BullQueueService,
+    @Inject('TripServiceRepositoryInterface')
+    private readonly tripServiceRepository: TripServiceRepositoryInterface,
   ) {}
 
   /**
@@ -540,6 +543,12 @@ export class TripsService {
           event: EventEmitSocket.TripCancel,
           roomName: RoomNameAdmin,
         });
+
+        // Check fist booking trip
+        const hasExperienceOnceService = await this.tripServiceRepository.checkTripHasServiceExperienceOnce(trip.id);
+        if (hasExperienceOnceService) {
+          await this.customerRepository.update(userId, { newUser: true });
+        }
       } catch (error) {
         await queryRunner.rollbackTransaction();
         throw error;

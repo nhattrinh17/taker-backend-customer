@@ -1,3 +1,5 @@
+import { IsString } from 'class-validator';
+
 export class DataShoemakerResponseTripDto {
   tripId: string;
   jobId: string;
@@ -10,8 +12,9 @@ export class DataShoemakerResponseTripDto {
 }
 
 export class FindShoemakerWithSocketDto {
+  @IsString()
   userId: string;
+
+  @IsString()
   tripId: string;
-  location: { lat: number; lng: number };
-  statusSchedule?: string;
 }

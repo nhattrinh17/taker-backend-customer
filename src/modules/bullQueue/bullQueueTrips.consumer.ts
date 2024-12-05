@@ -132,7 +132,7 @@ export class BullQueueTripConsumer {
    */
   async processFindClosestShoemakers(job: Job<unknown>, isSchedule?: boolean) {
     try {
-      const { tripId, userId } = job.data as RequestTripData & {
+      const { tripId, userId: customerId } = job.data as RequestTripData & {
         userId: string;
       };
       // Check if the trip exists and is searching
@@ -162,7 +162,7 @@ export class BullQueueTripConsumer {
         where: { id: tripId },
         relations: ['services'],
       });
-      const socketCustomerId = await this.socketService.getSocketIdByUserId(userId);
+      let socketCustomerId = await this.socketService.getSocketIdByUserId(customerId);
 
       if (!trip || trip.status !== StatusEnum.SEARCHING) {
         socketCustomerId &&
@@ -192,7 +192,7 @@ export class BullQueueTripConsumer {
         return;
       }
 
-      const customer = await this.customerRepository.findOneBy({ id: userId });
+      const customer = await this.customerRepository.findOneBy({ id: customerId });
 
       const h = h3.latLngToCell(Number(trip.latitude), Number(trip.longitude), RESOLUTION);
 
@@ -307,6 +307,8 @@ export class BullQueueTripConsumer {
                   income: trip.income,
                   scheduleTime: +trip.scheduleTime,
                   orderId: trip.orderId,
+                  customerId,
+                  jobId: job.id,
                 },
                 event: 'shoemaker-request-trip',
                 roomName: shoemakerSocketId,
@@ -363,7 +365,7 @@ export class BullQueueTripConsumer {
                   shoemaker,
                   tripId,
                   jobId: job.id,
-                  customerId: userId,
+                  customerId: customerId,
                   orderId: trip.orderId,
                   customerFcmToken: customer.fcmToken,
                   customerFullName: customer.fullName,
@@ -377,13 +379,12 @@ export class BullQueueTripConsumer {
               this.redis.sadd(`trips:request:${tripId}`, shoemaker.id),
             ]);
 
-            // TODO: Cập nhật lại tránh trường hợp từ chối đơn 2 lần
             // Set a timeout to automatically resolve the promise after 60 seconds
             setTimeout(async () => {
-              const checkShoemakerAccess = await this.redis.sismember(`trips:accepted:${tripId}`, shoemaker.id);
+              const checkShoemakerInteract = await this.redis.sismember(`trips:interactive:${tripId}`, shoemaker.id);
               // shoemaker auto cancel
-              if (!checkShoemakerAccess) {
-                console.log('Shoemaker auto cancelled', shoemaker.fullName);
+              console.log('Shoemaker auto cancelled', shoemaker.fullName, checkShoemakerInteract);
+              if (!checkShoemakerInteract) {
                 this.eventEmitter.emit('shoemaker-cancelation', {
                   tripId: trip.id,
                   shoemakerId: shoemaker.id,
@@ -400,15 +401,18 @@ export class BullQueueTripConsumer {
         setTimeout(async () => {
           console.log('Hết thời gian chờ');
           // Get shoemaker access
-          const shoemakerIdAccepted = await this.redis.hget(`trips:info:${tripId}`, 'shoemakerId');
+          shoemakerIdAccepted = await this.redis.hget(`trips:info:${tripId}`, 'shoemakerId');
           // Delete key for trip
-          await this.redis.del(`trips:info:${tripId}`);
+          await Promise.all([
+            //
+            this.redis.del(`trips:info:${tripId}`),
+            this.redis.del(`trips:request:${tripId}`),
+          ]);
           resolve(shoemakerIdAccepted);
         }, 62000);
       });
 
       // If no shoemaker accepted and job not cancel, emit a 'not found' message to the client
-      console.log('Check shoemaker access');
       if (!isJobCanceled && !shoemakerIdAccepted) {
         if (isSchedule && shoemakers.length) {
           if (job && (await job.isActive())) {
@@ -421,7 +425,7 @@ export class BullQueueTripConsumer {
           setTimeout(async () => {
             await this.bullQueueService.addQueueTrip(
               'trip-schedule',
-              { tripId: trip.id, userId, statusSchedule: StatusScheduleShoemaker.findShoemaker },
+              { tripId: trip.id, userId: customerId, statusSchedule: StatusScheduleShoemaker.findShoemaker },
               {
                 removeOnComplete: true,
                 jobId: job.id,
@@ -432,8 +436,10 @@ export class BullQueueTripConsumer {
           const tripCheck = await this.tripRepository.findOne({
             where: { id: tripId },
           });
+
           await this.tripRepository.update(tripId, { jobId: null });
           this.logger.log('[EMIT] No shoemaker found');
+          socketCustomerId = await this.socketService.getSocketIdByUserId(customerId);
           socketCustomerId &&
             tripCheck.status === StatusEnum.SEARCHING &&
             (await this.socketService.sendMessageToRoom({
@@ -474,7 +480,7 @@ export class BullQueueTripConsumer {
         const jobIdNotice = `CUSTOMERS_TRIP_SEND_NOTICE-${trip.id}`;
         await this.bullQueueService.addQueueTrip(
           'trip-schedule',
-          { tripId: trip.id, userId, statusSchedule: StatusScheduleShoemaker.sendNotification },
+          { tripId: trip.id, userId: customerId, statusSchedule: StatusScheduleShoemaker.sendNotification },
           {
             // delay: 30 * 1000,
             delay: delayTime,

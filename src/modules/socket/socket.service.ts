@@ -21,12 +21,14 @@ export class SocketService {
     try {
       const url = `${process.env.SOCKET_URL}/send-message`;
 
-      return this.httpService.axiosRef.post(url, dto, {
+      const res = await this.httpService.axiosRef.post(url, dto, {
         auth: {
           username: process.env.SOCKET_USERNAME,
           password: process.env.SOCKET_PASSWORD,
         },
       });
+      console.log('🚀 ~ SocketService ~ sendMessageToRoom ~ res:', res.data);
+      return true;
     } catch (error) {
       this.logger.error(error);
       return false;

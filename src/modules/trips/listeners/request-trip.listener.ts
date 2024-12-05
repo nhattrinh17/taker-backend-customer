@@ -37,6 +37,7 @@ export class RequestTripListener implements OnModuleInit {
     await subscriber.subscribe('shoemaker-response-trip'); // Đăng ký kênh
 
     subscriber.on('message', async (channel, message) => {
+      console.log('🚀 ~ RequestTripListener ~ subscriber.on ~ message', message);
       if (channel === 'shoemaker-response-trip') {
         try {
           const { event, tripId, shoemakerId, distance, time, customerId, jobId, scheduleTime, orderId }: DataShoemakerResponseTripDto & { event: string } = JSON.parse(message);
@@ -47,12 +48,13 @@ export class RequestTripListener implements OnModuleInit {
             await Promise.all(shoemakerRequest.map((i) => this.redisService.del(`pending-trip-${i}`)));
 
             const socketCustomerId = await this.socketService.getSocketIdByUserId(customerId);
+            console.log('🚀 ~ RequestTripListener ~ subscriber.on ~ socketCustomerId:', socketCustomerId);
 
             await this.tripRepository.update(tripId, {
               status: StatusEnum.ACCEPTED,
               shoemakerId,
             });
-            const shoemaker = await this.shoemakerRepository.findOneById(shoemakerId, ['fullName', 'phone']);
+            const shoemaker = await this.shoemakerRepository.findOneById(shoemakerId, ['fullName', 'phone', 'avatar', 'id', 'latitude', 'longitude']);
 
             // send to admin remote trip
             this.socketService.sendMessageToRoom({

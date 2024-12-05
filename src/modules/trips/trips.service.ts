@@ -712,6 +712,7 @@ export class TripsService {
   }
 
   async findShoemakersBySocket(dto: FindShoemakerWithSocketDto) {
+    console.log('🚀 ~ TripsService ~ findShoemakersBySocket ~ dto:', dto);
     const trip = await this.tripRepository.findOneBy({ id: dto.tripId, customerId: dto.userId });
     if (!trip?.jobId) {
       const job = await this.bullQueueService.addQueueTrip('find-closest-shoemakers', dto, {
@@ -719,5 +720,6 @@ export class TripsService {
       });
       await this.tripRepository.update(trip.id, { jobId: job.id as string });
     }
+    return true;
   }
 }

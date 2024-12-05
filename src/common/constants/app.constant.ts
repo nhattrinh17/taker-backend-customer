@@ -35,7 +35,6 @@ export const DEFAULT_MESSAGES = {
 export interface RequestTripData {
   userId: string;
   tripId: string;
-  location: { lat: number; lng: number };
   statusSchedule?: string;
 }
 

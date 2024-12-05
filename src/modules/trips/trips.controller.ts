@@ -50,7 +50,7 @@ export class TripsController {
 
   @Post('find-shoemakers')
   @Version('1')
-  @UseGuards(SocketCallApiGuard)
+  @UseGuards(CustomersAuthGuard)
   async findShoemakers(@Body(ValidationPipe) dto: FindShoemakerWithSocketDto) {
     return this.service.findShoemakersBySocket(dto);
   }

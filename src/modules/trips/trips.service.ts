@@ -37,6 +37,7 @@ import RedisService from '@common/services/redis.service';
 import { SocketService } from '@modules/socket/socket.service';
 import { BullQueueService } from '@modules/bullQueue/bullQueue.service';
 import { TripServiceRepositoryInterface } from 'src/database/interface/tripService.interface';
+import { FindShoemakerWithSocketDto } from './dto/request-trip.dto';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -707,6 +708,16 @@ export class TripsService {
       return trip.paymentStatus;
     } catch (e) {
       throw new BadRequestException(e.message);
+    }
+  }
+
+  async findShoemakersBySocket(dto: FindShoemakerWithSocketDto) {
+    const trip = await this.tripRepository.findOneBy({ id: dto.tripId, customerId: dto.userId });
+    if (!trip?.jobId) {
+      const job = await this.bullQueueService.addQueueTrip('find-closest-shoemakers', dto, {
+        removeOnComplete: true,
+      });
+      await this.tripRepository.update(trip.id, { jobId: job.id as string });
     }
   }
 }

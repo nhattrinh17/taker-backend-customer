@@ -2,24 +2,27 @@ import { Redis } from 'ioredis';
 
 export default class RedisService {
   private readonly client: Redis;
+  private readonly subscriberClient: Redis; // Client cho subscribe/publish
 
   constructor() {
     try {
-      this.client = new Redis({
+      const redisConfig = {
         host: process.env.QUEUE_HOST,
         port: parseInt(process.env.QUEUE_PORT, 10),
-        password: String(process.env.QUEUE_PASS),
-      });
+        password: process.env.QUEUE_PASS,
+      };
+
+      // Client dùng cho lưu trữ dữ liệu
+      this.client = new Redis(redisConfig);
+
+      // Client dùng cho adapter (subscriber mode)
+      this.subscriberClient = new Redis(redisConfig);
     } catch (error) {
       console.log('🚀 ~ RedisService ~ constructor ~ error:', error, process.env.QUEUE_HOST, process.env.QUEUE_PORT, process.env.QUEUE_PASS);
     }
 
     // Enable keyspace notifications
     // this.client.config('SET', 'notify-keyspace-events', 'Ex');
-  }
-
-  publish(channel: string, message: string) {
-    return this.client.publish(channel, message);
   }
 
   /**
@@ -140,7 +143,7 @@ export default class RedisService {
     await this.client.hdel(key, value);
   }
 
-  getClient(): Redis {
-    return this.client;
+  getSubscriberClient(): Redis {
+    return this.subscriberClient;
   }
 }

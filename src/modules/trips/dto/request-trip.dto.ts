@@ -8,3 +8,10 @@ export class DataShoemakerResponseTripDto {
   shoemakerId: string;
   orderId: string;
 }
+
+export class FindShoemakerWithSocketDto {
+  userId: string;
+  tripId: string;
+  location: { lat: number; lng: number };
+  statusSchedule?: string;
+}

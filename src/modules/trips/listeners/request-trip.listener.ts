@@ -33,7 +33,7 @@ export class RequestTripListener implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    const subscriber = this.redisService.getClient(); // Redis Subscriber
+    const subscriber = this.redisService.getSubscriberClient(); // Redis Subscriber
     await subscriber.subscribe('shoemaker-response-trip'); // Đăng ký kênh
 
     subscriber.on('message', async (channel, message) => {

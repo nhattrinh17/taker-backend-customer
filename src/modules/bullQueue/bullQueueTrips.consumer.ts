@@ -399,16 +399,21 @@ export class BullQueueTripConsumer {
 
       const waitShoemakerAccess = await new Promise((resolve, reject) => {
         setTimeout(async () => {
-          console.log('Hết thời gian chờ');
-          // Get shoemaker access
-          shoemakerIdAccepted = await this.redis.hget(`trips:info:${tripId}`, 'shoemakerId');
-          // Delete key for trip
-          await Promise.all([
-            //
-            this.redis.del(`trips:info:${tripId}`),
-            this.redis.del(`trips:request:${tripId}`),
-          ]);
-          resolve(shoemakerIdAccepted);
+          if (await job.isActive()) {
+            console.log('Hết thời gian chờ');
+            // Get shoemaker access
+            shoemakerIdAccepted = await this.redis.hget(`trips:info:${tripId}`, 'shoemakerId');
+            // Delete key for trip
+            await Promise.all([
+              //
+              this.redis.del(`trips:info:${tripId}`),
+              this.redis.del(`trips:request:${tripId}`),
+            ]);
+            resolve(shoemakerIdAccepted);
+          } else {
+            console.log('Đơn hàng đã hủy bởi khách');
+            isJobCanceled = true;
+          }
         }, 62000);
       });
 
@@ -509,16 +514,29 @@ export class BullQueueTripConsumer {
    * @param data { tripId: string, shoemakerId: string }
    */
   @OnEvent('shoemaker-cancelation')
-  @Process({
-    name: 'shoemaker-cancellation',
-    concurrency: 5,
-  })
   async handleShoemakerCancelationListener(data: { tripId: string; shoemakerId: string }) {
     try {
       await this.tripCancellationRepository.save({
         tripId: data.tripId,
         shoemakerId: data.shoemakerId,
         reason: 'Hệ thống tự động hủy đơn do hết thời gian chờ',
+      });
+    } catch (error) {
+      this.logger.error(error);
+    }
+  }
+
+  @Process({
+    name: 'shoemaker-cancellation',
+    concurrency: 5,
+  })
+  async handleShoemakerCancelationListenerJob(job: Job<unknown>) {
+    try {
+      const data = job.data as { tripId: string; shoemakerId: string; reason: string };
+      await this.tripCancellationRepository.save({
+        tripId: data.tripId,
+        shoemakerId: data.shoemakerId,
+        reason: data.reason || 'Hệ thống tự động hủy đơn',
       });
     } catch (error) {
       this.logger.error(error);
